@@ -31,6 +31,7 @@
       <groupId>io.gatling.highcharts</groupId>
       <artifactId>gatling-charts-highcharts</artifactId>
       <version>2.3.1</version>
+<!--  uncomment this if you want to build package just for your application, without Gatling inside  -->
 <!--      <scope>provided</scope> -->
     </dependency>
     <dependency>
