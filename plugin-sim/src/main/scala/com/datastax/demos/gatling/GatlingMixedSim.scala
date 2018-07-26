@@ -4,20 +4,18 @@ import java.util.UUID
 import java.util.concurrent.{ThreadLocalRandom, TimeUnit}
 
 import com.datastax.driver.core.ConsistencyLevel._
-import com.datastax.driver.core.policies.{HostFilterPolicy, RoundRobinPolicy, WhiteListPolicy}
 import com.datastax.driver.core.{Session => _, _}
-import com.datastax.driver.dse.{DseCluster, DseLoadBalancingPolicy, DseSession}
+import com.datastax.driver.dse.{DseCluster, DseSession}
 import com.datastax.gatling.plugin.DsePredef._
 import com.datastax.gatling.plugin.DseProtocolBuilder
 import com.github.javafaker.Faker
 import io.gatling.core.Predef.{exec, _}
 import io.gatling.core.scenario.Simulation
-import io.gatling.core.structure.{ChainBuilder, ScenarioBuilder}
+import io.gatling.core.structure.ScenarioBuilder
 
-import collection.JavaConverters._
 import scala.concurrent.duration.FiniteDuration
 
-class GatlingLoadSim extends Simulation {
+class GatlingMixedSim extends Simulation {
   // setting the cluster & open connection
   val clusterBuilder = new DseCluster.Builder
 
@@ -46,13 +44,10 @@ class GatlingLoadSim extends Simulation {
 
   // prepare queries (schema should already exists in database - execute 'cql/create-schema.cql' script before)
   val insertPrepared: PreparedStatement = dseSession.prepare(
-    "insert into gatling.oauth_tokens(id, nonce, user, created, expires, attributes) values(?,?,?,?,?,?) using TTL ?");
-  val insertPrepared2: PreparedStatement = dseSession.prepare(
-    "insert into gatling.user_tokens(id, nonce, user, created, expires, attributes) values(?,?,?,?,?,?) using TTL ?")
+    "insert into gatling.oauth_tokens(id, nonce, user, created, expires, attributes) values(?,?,?,?,?,?)");
   val updatePrepared: PreparedStatement = dseSession.prepare(
-    "update gatling.oauth_tokens using TTL ? set nonce = ? where id = ?")
-  val updatePrepared2: PreparedStatement = dseSession.prepare(
-    "update gatling.user_tokens using TTL ? set nonce = ? where user = ? and id = ?")
+    "update gatling.oauth_tokens set nonce = ? where id = ?")
+  val selectPrepared = dseSession.prepare("select user, nonce from gatling.oauth_tokens where id = ?")
 
   // Random generator for our feeder
   def random: ThreadLocalRandom = {
@@ -86,20 +81,25 @@ class GatlingLoadSim extends Simulation {
     .group("Insert")(
       exec(cql("InsertOAuth")
         .executePrepared(insertPrepared)
-        .withParams(List("token_id", "nonce1", "user", "created", "expires", "attrs", "ttl")))
-        .exec(cql("insertUser")
-          .executePrepared(insertPrepared2)
-          .withParams(List("token_id", "nonce1", "user", "created", "expires", "attrs", "ttl")))
+        .withParams(List("token_id", "nonce1", "user", "created", "expires", "attrs")))
     )
-    //    .pause(1) // wait 1 second before rotating token...
+    .pause(1) // wait 1 second before selecting token...
+    .group("Select")(
+      exec(cql("SelectOAuth")
+        .executePrepared(selectPrepared)
+        .withParams(List("token_id"))
+        // check that we received data from DSE
+        .check(rowCount.greaterThan(0))
+        .check(resultSet.saveAs("fetchedData"))
+        .check(columnValue("user").is(session => session("user").as[String]))
+        .check(columnValue("nonce").is(session => session("nonce1").as[Int]))
+      )
+    )
     .group("Update")(
-    exec(cql("updateOAuth")
-      .executePrepared(updatePrepared)
-      .withParams(List("ttl", "nonce2", "token_id")))
-      .exec(cql("updateUser")
-        .executePrepared(updatePrepared2)
-        .withParams(List("ttl", "nonce2", "user", "token_id")))
-  )
+      exec(cql("updateOAuth")
+        .executePrepared(updatePrepared)
+        .withParams(List("nonce2", "token_id")))
+    )
 
   // setup & execute simulation...
   val testDuration = FiniteDuration(java.lang.Long.getLong("testDuration", 5), TimeUnit.MINUTES)
@@ -107,9 +107,6 @@ class GatlingLoadSim extends Simulation {
 
   setUp(
     loadData.inject(
-//      rampUsersPerSec(concurrentSessionCount / 3) to (concurrentSessionCount) during testDuration
-      constantUsersPerSec(concurrentSessionCount / 4) during (testDuration / 4),
-      nothingFor(FiniteDuration(1, TimeUnit.MINUTES)),
       constantUsersPerSec(concurrentSessionCount) during testDuration
     )
   ).assertions(
