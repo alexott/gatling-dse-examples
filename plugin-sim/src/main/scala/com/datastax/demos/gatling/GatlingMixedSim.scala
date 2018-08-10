@@ -58,8 +58,9 @@ class GatlingMixedSim extends Simulation {
   val defaultTTL = 30 * 60 // 30 minutes
   val faker = new Faker()
   val feeder = Iterator.continually({
+    val start = System.nanoTime()
     val timestamp = java.time.Instant.now()
-    Map(
+    val m = Map(
       "token_id" -> UUID.randomUUID(),
       "user" -> faker.name().username(),
       "nonce1" -> random.nextInt(),
@@ -72,6 +73,9 @@ class GatlingMixedSim extends Simulation {
       ),
       "ttl" -> defaultTTL
     )
+    val end = System.nanoTime()
+//    println("Generating next value took " + TimeUnit.NANOSECONDS.toMicros(end - start) + "microseconds")
+    m
   }
   )
 
