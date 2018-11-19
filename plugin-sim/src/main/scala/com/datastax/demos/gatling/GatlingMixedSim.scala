@@ -94,10 +94,17 @@ class GatlingMixedSim extends Simulation {
         .withParams(List("token_id"))
         // check that we received data from DSE
         .check(rowCount.greaterThan(0))
-        .check(resultSet.saveAs("fetchedData"))
+        .check(allRows.saveAs("fetchedData"))
         .check(columnValue("user").is(session => session("user").as[String]))
         .check(columnValue("nonce").is(session => session("nonce1").as[Int]))
       )
+      // just an example how to work with saved data
+      .exec({session: Session =>
+        val allRows = session("fetchedData").as[Seq[Row]]
+        // do something with fetched data, for example, print every row
+        // allRows.foreach(println)
+        session
+      })
     )
     .group("Update")(
       exec(cql("updateOAuth")
